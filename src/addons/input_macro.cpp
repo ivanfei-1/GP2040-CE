@@ -4,6 +4,38 @@
 
 #include "hardware/gpio.h"
 
+// ---------------------------------------------------------------------------
+// Level-sensed macro chain
+//
+// Shorting CHAIN_ENABLE_PIN to GND runs, forever:
+//     macro #(CHAIN_MAIN_MACRO_INDEX + 1)  x CHAIN_REPEAT_COUNT
+//     macro #(CHAIN_CLEANUP_MACRO_INDEX + 1) x 1
+// Opening the connection stops immediately and clears the counter, so the next
+// time it is shorted the chain always restarts at the first main macro.
+//
+// The macros themselves are never copied: every run reads the current contents
+// of macroList[] straight out of storage, so editing macro 2 / macro 4 in the
+// Web Config takes effect on the next repetition with no firmware change.
+//
+// CHAIN_ENABLE_PIN must be left unassigned in the Web Config Pin Mapping. If it
+// is claimed by a button, a macro trigger, an addon or reserved hardware, the
+// chain disables itself (fail-safe) rather than double-driving the pin.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
+constexpr int CHAIN_CLEANUP_MACRO_INDEX = 3;    // Web Config "Macro 4"
+
+constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
+constexpr int CHAIN_ENABLE_PIN = 21;            // GP21, active-low (GP21 <-> GND)
+
+static_assert(CHAIN_REPEAT_COUNT > 0,
+        "CHAIN_REPEAT_COUNT must be at least 1");
+static_assert(CHAIN_MAIN_MACRO_INDEX >= 0 && CHAIN_MAIN_MACRO_INDEX < MAX_MACRO_LIMIT,
+        "CHAIN_MAIN_MACRO_INDEX out of range");
+static_assert(CHAIN_CLEANUP_MACRO_INDEX >= 0 && CHAIN_CLEANUP_MACRO_INDEX < MAX_MACRO_LIMIT,
+        "CHAIN_CLEANUP_MACRO_INDEX out of range");
+}
+
 bool InputMacro::available() {
     // Macro Button initialized by void Gamepad::setup()
     GpioMappingInfo* pinMappings = Storage::getInstance().getProfilePinMappings();
@@ -22,6 +54,15 @@ bool InputMacro::available() {
                 break;
         }
     }
+
+    // A usable chain-enable pin is enough on its own to want this addon loaded,
+    // even when no macro trigger pin is mapped at all.
+    if (isValidPin(CHAIN_ENABLE_PIN) &&
+            pinMappings[CHAIN_ENABLE_PIN].action == GpioAction::NONE &&
+            Storage::getInstance().getAddonOptions().macroOptions.enabled) {
+        return true;
+    }
+
     return false;
 }
 
@@ -68,9 +109,85 @@ void InputMacro::setup() {
     }
     boardLedEnabled = false;
     prevMacroInputPressed = false;
+    setupChainPin();
+    stopChain();
+}
+
+void InputMacro::setupChainPin() {
+    GpioMappingInfo* pinMappings = Storage::getInstance().getProfilePinMappings();
+    // Only drive the pin if it is a real GPIO that nothing else in this profile
+    // claims, otherwise shorting it to GND would also fire a real input.
+    chainPinAvailable = isValidPin(CHAIN_ENABLE_PIN) &&
+            pinMappings[CHAIN_ENABLE_PIN].action == GpioAction::NONE;
+    if (!chainPinAvailable)
+        return;
+
+    gpio_init(CHAIN_ENABLE_PIN);
+    gpio_set_dir(CHAIN_ENABLE_PIN, GPIO_IN);
+    gpio_pull_up(CHAIN_ENABLE_PIN);
+}
+
+bool InputMacro::isChainEnabledByPin() const {
+    // active-low: shorted to GND = enabled, open (internal pull-up) = disabled
+    return chainPinAvailable && gpio_get(CHAIN_ENABLE_PIN) == 0;
+}
+
+void InputMacro::startChainMacro(int macroIndex) {
+    if (macroIndex < 0 || macroIndex >= MAX_MACRO_LIMIT) {
+        stopChain();
+        return;
+    }
+
+    Macro& macro = inputMacroOptions->macroList[macroIndex];
+    if (!macro.enabled || macro.macroInputs_count == 0) {
+        stopChain(); // fail-safe: never index into an empty/disabled macro
+        return;
+    }
+
+    chainMacroIndex = macroIndex;
+    macroPosition = macroIndex;
+    pressedMacro = -1;
+    macroInputPosition = 0;
+    isMacroRunning = true;
+    // The chain owns this macro's lifetime, there is no physical trigger held.
+    isMacroTriggerHeld = true;
+    currentMicros = getMicro();
+    macroStartTime = currentMicros;
+
+    MacroInput& firstInput = macro.macroInputs[macroInputPosition];
+    uint32_t firstInputDuration = firstInput.duration + firstInput.waitDuration;
+    macroInputHoldTime = firstInputDuration <= 0 ? INPUT_HOLD_US : firstInputDuration;
+}
+
+void InputMacro::stopChain() {
+    chainModeActive = false;
+    chainMacroIndex = -1;
+    chainMainCompletedCount = 0;
     reset();
 }
 
+void InputMacro::handleChainMacroFinished() {
+    if (!chainModeActive)
+        return;
+
+    if (macroPosition == CHAIN_MAIN_MACRO_INDEX) {
+        ++chainMainCompletedCount;
+        if (chainMainCompletedCount >= CHAIN_REPEAT_COUNT) {
+            startChainMacro(CHAIN_CLEANUP_MACRO_INDEX);
+        } else {
+            startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        }
+        return;
+    }
+
+    if (macroPosition == CHAIN_CLEANUP_MACRO_INDEX) {
+        chainMainCompletedCount = 0;
+        startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        return;
+    }
+
+    stopChain(); // should not happen: the chain only ever runs the two macros above
+}
 
 void InputMacro::reset() {
     macroPosition = -1;
@@ -171,7 +288,9 @@ void InputMacro::runCurrentMacro() {
     Macro& macro = inputMacroOptions->macroList[macroPosition];
 
     // Stop Macro if released (ON PRESS & ON HOLD REPEAT)
-    if (inputMacroOptions->macroList[macroPosition].macroType == ON_HOLD_REPEAT &&
+    // In chain mode the enable pin owns the lifetime, not a physical trigger.
+    if (!chainModeActive &&
+            inputMacroOptions->macroList[macroPosition].macroType == ON_HOLD_REPEAT &&
             !isMacroTriggerHeld ) {
         reset();
         return;
@@ -205,6 +324,12 @@ void InputMacro::runCurrentMacro() {
         macroInputPosition++;
         
         if (macroInputPosition >= (macro.macroInputs_count)) {
+            if (chainModeActive) {
+                // Hand over to the chain scheduler and bail out immediately:
+                // macro/macroInput above may now refer to the previous macro.
+                handleChainMacroFinished();
+                return;
+            }
             if ( macro.macroType == ON_PRESS ) {
                 reset(); // On press = no more macro
             } else {
@@ -249,12 +374,42 @@ void InputMacro::preprocess()
         // Override Toggle Pressed OR focus mode pin is set
         if (focusModeOptions->overrideEnabled ||
             (gamepad->mapFocusMode->pinMask && (gamepad->debouncedGpio & gamepad->mapFocusMode->pinMask))) {
+            // Focus mode locks out macros, and that includes the chain.
+            if (chainModeActive) {
+                stopChain();
+            }
             return;
         }
     }
 
-    checkMacroPress();
-    checkMacroAction();
+    if (!isChainEnabledByPin()) {
+        // Enable pin is open (or unusable): stop any chain and behave exactly
+        // like stock GP2040-CE, so manually triggered macros are untouched.
+        if (chainModeActive) {
+            stopChain();
+        }
+
+        checkMacroPress();
+        checkMacroAction();
+        runCurrentMacro();
+        return;
+    }
+
+    if (!chainModeActive) {
+        // Pin just went low: take control away from any manually running macro
+        // and always (re)start the chain at the first main macro, count zeroed.
+        reset();
+        chainModeActive = true;
+        chainMainCompletedCount = 0;
+        startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+    } else if (!isMacroRunning) {
+        // Current step was aborted from underneath us (an interruptible macro
+        // seeing user input); resume the chain at the same step.
+        startChainMacro(chainMacroIndex);
+    }
+
+    // No checkMacroPress()/checkMacroAction() while chaining: physical macro
+    // triggers must not disturb the scheduler.
     runCurrentMacro();
 }
 
@@ -290,4 +445,9 @@ void InputMacro::reinit() {
                 break;
         }
     }
+
+    // Profile switch: re-check the chain pin against the new mapping and never
+    // carry chain state across.
+    setupChainPin();
+    stopChain();
 }

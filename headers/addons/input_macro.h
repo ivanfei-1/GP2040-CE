@@ -47,6 +47,16 @@ private:
     void runCurrentMacro();
     void reset();
     void restart(Macro& macro);
+    // Level-sensed macro chain (see CHAIN_* constants in input_macro.cpp)
+    void setupChainPin();
+    bool isChainEnabledByPin() const;
+    void startChainMacro(int macroIndex);
+    void stopChain();
+    void handleChainMacroFinished();
+    bool chainPinAvailable;
+    bool chainModeActive;
+    int chainMacroIndex;
+    uint32_t chainMainCompletedCount;
     bool isMacroRunning;
     bool isMacroTriggerHeld;
     int macroPosition;
