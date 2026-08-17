@@ -7,11 +7,14 @@
 // ---------------------------------------------------------------------------
 // Level-sensed macro chain
 //
-// While CHAIN_ENABLE_PIN sits at its enabled level, the chain runs forever:
-//     [ main macro x CHAIN_REPEAT_COUNT, cleanup macro x1 ] x GAME_RESET_EVERY_GROUPS
-//     reset macro x1
+// While CHAIN_ENABLE_PIN sits at its enabled level, the chain runs:
+//     init macro x1   (once per start, then never again)
+//     forever:
+//         [ main macro x CHAIN_REPEAT_COUNT, cleanup macro x1 ] x GAME_RESET_EVERY_GROUPS
+//         reset macro x1
 // One "group" is counted when the cleanup macro finishes. After the reset macro
-// both counters are cleared and the cycle starts over at the main macro.
+// both counters are cleared and the cycle starts over at the main macro - the init
+// macro is for one-off setup at power-up, so it is not repeated there.
 // Leaving that level stops the chain immediately - mid-macro, not at the end of one -
 // and clears both counters, so the chain always restarts at the first main macro.
 //
@@ -27,9 +30,10 @@
 // config mode - so the chain cannot run while the board is being configured.
 // ---------------------------------------------------------------------------
 namespace {
+constexpr int CHAIN_INIT_MACRO_INDEX = 0;       // Web Config "Macro 1", once per start
 constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
-constexpr int CHAIN_CLEANUP_MACRO_INDEX = 3;    // Web Config "Macro 4"
-constexpr int GAME_RESET_MACRO_INDEX = 5;       // Web Config "Macro 6"
+constexpr int CHAIN_CLEANUP_MACRO_INDEX = 2;    // Web Config "Macro 3"
+constexpr int GAME_RESET_MACRO_INDEX = 3;       // Web Config "Macro 4"
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
@@ -44,6 +48,9 @@ static_assert(CHAIN_REPEAT_COUNT > 0,
         "CHAIN_REPEAT_COUNT must be at least 1");
 static_assert(GAME_RESET_EVERY_GROUPS > 0,
         "GAME_RESET_EVERY_GROUPS must be at least 1");
+// A negative init index means "no init step": the chain starts at the main macro.
+static_assert(CHAIN_INIT_MACRO_INDEX < MAX_MACRO_LIMIT,
+        "CHAIN_INIT_MACRO_INDEX out of range");
 static_assert(CHAIN_MAIN_MACRO_INDEX >= 0 && CHAIN_MAIN_MACRO_INDEX < MAX_MACRO_LIMIT,
         "CHAIN_MAIN_MACRO_INDEX out of range");
 static_assert(CHAIN_CLEANUP_MACRO_INDEX >= 0 && CHAIN_CLEANUP_MACRO_INDEX < MAX_MACRO_LIMIT,
@@ -191,6 +198,12 @@ void InputMacro::stopChain() {
 void InputMacro::handleChainMacroFinished() {
     if (!chainModeActive)
         return;
+
+    // The init macro runs once per start, never again inside the cycle.
+    if (CHAIN_INIT_MACRO_INDEX >= 0 && macroPosition == CHAIN_INIT_MACRO_INDEX) {
+        startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        return;
+    }
 
     if (macroPosition == CHAIN_MAIN_MACRO_INDEX) {
         ++chainMainCompletedCount;
@@ -438,7 +451,8 @@ void InputMacro::preprocess()
         chainModeActive = true;
         chainMainCompletedCount = 0;
         chainGroupCompletedCount = 0;
-        startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        startChainMacro(CHAIN_INIT_MACRO_INDEX >= 0 ? CHAIN_INIT_MACRO_INDEX
+                                                    : CHAIN_MAIN_MACRO_INDEX);
     } else if (!isMacroRunning) {
         // Current step was aborted from underneath us (an interruptible macro
         // seeing user input); resume the chain at the same step.

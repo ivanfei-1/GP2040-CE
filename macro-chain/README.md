@@ -3,12 +3,13 @@
 A small patch on top of GP2040-CE **v0.7.12** that runs
 
 ```
-[ Macro 2 × N  →  Macro 4 × 1 ] × M groups  →  Macro 6 × 1  →  repeat forever
+Macro 1 × 1  →  [ Macro 2 × N  →  Macro 3 × 1 ] × M groups  →  Macro 4 × 1  →  repeat
+                └──────────────────── forever ─────────────────────────────────┘
 ```
 
 for as long as one GPIO sits at its enabled level. Leave that level and the chain stops
 immediately — mid-macro, not at the end of it — clears both counters, and the next time
-it starts again from Macro 2 #1.
+it starts over from the init macro.
 
 The default polarity is **open = run, shorted to GND = stop**, so the board starts on its
 own when powered and needs no jumper to farm. Flip `CHAIN_RUNS_WHEN_SHORTED` for the
@@ -21,7 +22,7 @@ hours — a "reset" macro every so often that closes and reopens the game.
 A group is counted when the **cleanup** macro finishes, so with the defaults below the
 reset macro runs once per 10 × 20 = 200 main-macro runs.
 
-## The three knobs
+## The knobs
 
 All at the top of [`src/addons/input_macro.cpp`](../src/addons/input_macro.cpp):
 
@@ -33,8 +34,19 @@ constexpr bool CHAIN_RUNS_WHEN_SHORTED = false;  // false: open = run, shorted =
 ```
 
 Change, rebuild, reflash. Nothing else in the firmware needs touching. Which macros run
-is fixed at `macroList[1]` ("Macro 2"), `macroList[3]` ("Macro 4") and `macroList[5]`
-("Macro 6") via the `*_MACRO_INDEX` constants in the same block.
+is set by the `*_MACRO_INDEX` constants in the same block — by default macros 1 to 4:
+
+```cpp
+constexpr int CHAIN_INIT_MACRO_INDEX = 0;       // once per start; negative = skip
+constexpr int CHAIN_MAIN_MACRO_INDEX = 1;
+constexpr int CHAIN_CLEANUP_MACRO_INDEX = 2;
+constexpr int GAME_RESET_MACRO_INDEX = 3;
+```
+
+The init macro is for one-off setup at power-up — connecting the controller, dismissing a
+title screen — so it runs once when the chain starts and is **not** repeated after the
+reset macro. Point `CHAIN_INIT_MACRO_INDEX` at the reset macro's own slot, or add the same
+inputs to the front of the reset macro, if the cycle needs it every time.
 
 ## Wiring
 
@@ -63,13 +75,13 @@ corner pin on a Pico (physical pin 21), two pins from the GND at physical pin 23
 
 ## Requirements
 
-1. **All three macros must be enabled** and have at least one input each, or the chain
+1. **Every macro the chain runs must be enabled** and have at least one input each, or the chain
    fail-safes and stops rather than indexing into an empty macro.
 2. Macros default to *interruptible*: touching the controller aborts the running macro.
    The chain then restarts that same step and keeps its count. Turn interruptible off
    (and exclusive on) for uninterrupted running.
 
-Macro contents are read from storage on every repetition, so editing Macro 2, 4 or 6 in
+Macro contents are read from storage on every repetition, so editing any of them in
 the Web Config takes effect on the next loop — no rebuild, and reflashing the firmware
 does not disturb the stored macros.
 
