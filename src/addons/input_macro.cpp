@@ -7,21 +7,24 @@
 // ---------------------------------------------------------------------------
 // Level-sensed macro chain
 //
-// Shorting CHAIN_ENABLE_PIN to GND runs, forever:
+// While CHAIN_ENABLE_PIN sits at its enabled level, the chain runs forever:
 //     [ main macro x CHAIN_REPEAT_COUNT, cleanup macro x1 ] x GAME_RESET_EVERY_GROUPS
 //     reset macro x1
 // One "group" is counted when the cleanup macro finishes. After the reset macro
 // both counters are cleared and the cycle starts over at the main macro.
-// Opening the connection stops immediately and clears both counters, so the next
-// time it is shorted the chain always restarts at the first main macro.
+// Leaving that level stops the chain immediately - mid-macro, not at the end of one -
+// and clears both counters, so the chain always restarts at the first main macro.
 //
 // The macros themselves are never copied: every run reads the current contents
-// of macroList[] straight out of storage, so editing macro 2 / 4 / 5 in the
+// of macroList[] straight out of storage, so editing macro 2 / 4 / 6 in the
 // Web Config takes effect on the next repetition with no firmware change.
 //
-// CHAIN_ENABLE_PIN must be left unassigned in the Web Config Pin Mapping. If it
-// is claimed by a button, a macro trigger, an addon or reserved hardware, the
-// chain disables itself (fail-safe) rather than double-driving the pin.
+// The enable pin may be shared with a button (see CHAIN_RUNS_WHEN_SHORTED): only its
+// level is read, and a pin the gamepad already owns keeps the gamepad's own pull-up
+// configuration. Shorting a shared pin does also press that button.
+//
+// Web Config mode never reaches this addon - GP2040::run() skips every Core0 add-on in
+// config mode - so the chain cannot run while the board is being configured.
 // ---------------------------------------------------------------------------
 namespace {
 constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
@@ -30,7 +33,12 @@ constexpr int GAME_RESET_MACRO_INDEX = 5;       // Web Config "Macro 6"
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
-constexpr int CHAIN_ENABLE_PIN = 21;            // GP21, active-low (GP21 <-> GND)
+constexpr int CHAIN_ENABLE_PIN = 17;            // GP17 (also the Plus / web-config button)
+
+// false: open = run, shorted to GND = stop. This lets the chain share a pin that is
+// already wired to a button, and start on its own as soon as the board is powered.
+// true: the reverse, for a dedicated jumper on an otherwise unused pin.
+constexpr bool CHAIN_RUNS_WHEN_SHORTED = false;
 
 static_assert(CHAIN_REPEAT_COUNT > 0,
         "CHAIN_REPEAT_COUNT must be at least 1");
@@ -66,7 +74,6 @@ bool InputMacro::available() {
     // A usable chain-enable pin is enough on its own to want this addon loaded,
     // even when no macro trigger pin is mapped at all.
     if (isValidPin(CHAIN_ENABLE_PIN) &&
-            pinMappings[CHAIN_ENABLE_PIN].action == GpioAction::NONE &&
             Storage::getInstance().getAddonOptions().macroOptions.enabled) {
         return true;
     }
@@ -123,21 +130,27 @@ void InputMacro::setup() {
 
 void InputMacro::setupChainPin() {
     GpioMappingInfo* pinMappings = Storage::getInstance().getProfilePinMappings();
-    // Only drive the pin if it is a real GPIO that nothing else in this profile
-    // claims, otherwise shorting it to GND would also fire a real input.
-    chainPinAvailable = isValidPin(CHAIN_ENABLE_PIN) &&
-            pinMappings[CHAIN_ENABLE_PIN].action == GpioAction::NONE;
+    chainPinAvailable = isValidPin(CHAIN_ENABLE_PIN);
     if (!chainPinAvailable)
         return;
 
-    gpio_init(CHAIN_ENABLE_PIN);
-    gpio_set_dir(CHAIN_ENABLE_PIN, GPIO_IN);
-    gpio_pull_up(CHAIN_ENABLE_PIN);
+    // A pin the gamepad already owns is set up as a pulled-up input by it; leave that
+    // alone and just read the level. An unassigned pin is ours to configure, and needs
+    // the pull-up so that "open" is a defined level rather than a floating one.
+    if (pinMappings[CHAIN_ENABLE_PIN].action == GpioAction::NONE) {
+        gpio_init(CHAIN_ENABLE_PIN);
+        gpio_set_dir(CHAIN_ENABLE_PIN, GPIO_IN);
+        gpio_pull_up(CHAIN_ENABLE_PIN);
+    }
 }
 
 bool InputMacro::isChainEnabledByPin() const {
-    // active-low: shorted to GND = enabled, open (internal pull-up) = disabled
-    return chainPinAvailable && gpio_get(CHAIN_ENABLE_PIN) == 0;
+    if (!chainPinAvailable)
+        return false;
+
+    // Pulled up, so: shorted to GND = LOW, open = HIGH.
+    const bool shorted = gpio_get(CHAIN_ENABLE_PIN) == 0;
+    return CHAIN_RUNS_WHEN_SHORTED ? shorted : !shorted;
 }
 
 void InputMacro::startChainMacro(int macroIndex) {

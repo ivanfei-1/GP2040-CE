@@ -6,9 +6,13 @@ A small patch on top of GP2040-CE **v0.7.12** that runs
 [ Macro 2 × N  →  Macro 4 × 1 ] × M groups  →  Macro 6 × 1  →  repeat forever
 ```
 
-for as long as one dedicated GPIO is **shorted to GND**. Open the jumper and the chain
-stops immediately — mid-macro, not at the end of it — clears both counters, and the next
-short starts again from Macro 2 #1.
+for as long as one GPIO sits at its enabled level. Leave that level and the chain stops
+immediately — mid-macro, not at the end of it — clears both counters, and the next time
+it starts again from Macro 2 #1.
+
+The default polarity is **open = run, shorted to GND = stop**, so the board starts on its
+own when powered and needs no jumper to farm. Flip `CHAIN_RUNS_WHEN_SHORTED` for the
+opposite (a dedicated jumper you fit to start).
 
 Intended for long unattended grinding sessions: a "collect" macro that has to be followed
 periodically by a "clean up" macro, and — because games drift out of a known state over
@@ -24,7 +28,8 @@ All at the top of [`src/addons/input_macro.cpp`](../src/addons/input_macro.cpp):
 ```cpp
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;      // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
-constexpr int CHAIN_ENABLE_PIN = 21;             // GP21, active-low (GP21 <-> GND)
+constexpr int CHAIN_ENABLE_PIN = 17;             // which GPIO gates the chain
+constexpr bool CHAIN_RUNS_WHEN_SHORTED = false;  // false: open = run, shorted = stop
 ```
 
 Change, rebuild, reflash. Nothing else in the firmware needs touching. Which macros run
@@ -34,26 +39,31 @@ is fixed at `macroList[1]` ("Macro 2"), `macroList[3]` ("Macro 4") and `macroLis
 ## Wiring
 
 ```
-GP21 (physical pin 27) ---- jumper/switch ---- GND (physical pin 28)
+CHAIN_ENABLE_PIN ---- jumper/switch ---- GND
 ```
 
-On a Raspberry Pi Pico those are adjacent pins, 7th and 8th counting up from the
-bottom-right corner. **Never wire the enable pin to 3.3V** — it uses the internal
-pull-up, so GPIO ↔ GND is all that is needed.
+The pin is read as a level, never as an edge, so a plain jumper or a latching switch
+both work. **Never wire it to 3.3V** — the pull-up does that job, so GPIO ↔ GND is all
+that is needed.
 
-Pick the pin with its neighbours in mind. If the pin next door triggers a macro, a
-one-pin miscount silently runs that macro forever and looks exactly like a firmware
-bug. GP21 is surrounded by pins that are unassigned in the stock map, so miscounting
-merely fails to start the chain.
+Two ways to use it:
+
+- **Dedicated free pin.** Set `CHAIN_RUNS_WHEN_SHORTED = true` and fit a jumper to run.
+  Pick a pin whose neighbours are unassigned: if the pin next door triggers a macro, a
+  one-pin miscount silently runs that macro forever and looks exactly like a firmware
+  bug.
+- **Shared with a button** (the default: GP17, which on this build is Plus, the button
+  held at power-up to enter Web Config). Leave it open and the chain runs by itself;
+  short it to stop. Config mode still works because add-ons never run there.
+
+Sharing a pin means shorting it also presses that button. Choose a button whose press is
+harmless in whatever the macros are driving.
 
 ## Requirements
 
-1. **The enable pin must be unassigned** in the active profile's Pin Mapping. If
-   anything claims it, the chain disables itself on purpose — otherwise shorting the
-   pin to GND would also inject a real button press.
-2. **All three macros must be enabled** and have at least one input each, or the chain
+1. **All three macros must be enabled** and have at least one input each, or the chain
    fail-safes and stops rather than indexing into an empty macro.
-3. Macros default to *interruptible*: touching the controller aborts the running macro.
+2. Macros default to *interruptible*: touching the controller aborts the running macro.
    The chain then restarts that same step and keeps its count. Turn interruptible off
    (and exclusive on) for uninterrupted running.
 
