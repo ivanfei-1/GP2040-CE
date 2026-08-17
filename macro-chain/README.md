@@ -28,7 +28,7 @@ All at the top of [`src/addons/input_macro.cpp`](../src/addons/input_macro.cpp):
 ```cpp
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;      // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
-constexpr int CHAIN_ENABLE_PIN = 17;             // which GPIO gates the chain
+constexpr int CHAIN_ENABLE_PIN = 16;             // which GPIO gates the chain
 constexpr bool CHAIN_RUNS_WHEN_SHORTED = false;  // false: open = run, shorted = stop
 ```
 
@@ -52,12 +52,14 @@ Two ways to use it:
   Pick a pin whose neighbours are unassigned: if the pin next door triggers a macro, a
   one-pin miscount silently runs that macro forever and looks exactly like a firmware
   bug.
-- **Shared with a button** (the default: GP17, which on this build is Plus, the button
-  held at power-up to enter Web Config). Leave it open and the chain runs by itself;
-  short it to stop. Config mode still works because add-ons never run there.
+- **Shared with a button.** The pin does not have to be unassigned: when the gamepad
+  already owns it, its pull-up setup is left alone and only its level is read. Config
+  mode still works even when sharing the web-config boot button, because add-ons never
+  run in config mode. The catch is that shorting the pin also presses that button, so
+  only share one whose press is harmless.
 
-Sharing a pin means shorting it also presses that button. Choose a button whose press is
-harmless in whatever the macros are driving.
+The default is GP16 with `CHAIN_RUNS_WHEN_SHORTED = false`: unassigned, the bottom-right
+corner pin on a Pico (physical pin 21), two pins from the GND at physical pin 23.
 
 ## Requirements
 

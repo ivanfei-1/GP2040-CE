@@ -33,7 +33,7 @@ constexpr int GAME_RESET_MACRO_INDEX = 5;       // Web Config "Macro 6"
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
-constexpr int CHAIN_ENABLE_PIN = 17;            // GP17 (also the Plus / web-config button)
+constexpr int CHAIN_ENABLE_PIN = 16;            // GP16, unassigned in the stock map
 
 // false: open = run, shorted to GND = stop. This lets the chain share a pin that is
 // already wired to a button, and start on its own as soon as the board is powered.
