@@ -8,13 +8,15 @@
 // Level-sensed macro chain
 //
 // Shorting CHAIN_ENABLE_PIN to GND runs, forever:
-//     macro #(CHAIN_MAIN_MACRO_INDEX + 1)  x CHAIN_REPEAT_COUNT
-//     macro #(CHAIN_CLEANUP_MACRO_INDEX + 1) x 1
-// Opening the connection stops immediately and clears the counter, so the next
+//     [ main macro x CHAIN_REPEAT_COUNT, cleanup macro x1 ] x GAME_RESET_EVERY_GROUPS
+//     reset macro x1
+// One "group" is counted when the cleanup macro finishes. After the reset macro
+// both counters are cleared and the cycle starts over at the main macro.
+// Opening the connection stops immediately and clears both counters, so the next
 // time it is shorted the chain always restarts at the first main macro.
 //
 // The macros themselves are never copied: every run reads the current contents
-// of macroList[] straight out of storage, so editing macro 2 / macro 4 in the
+// of macroList[] straight out of storage, so editing macro 2 / 4 / 5 in the
 // Web Config takes effect on the next repetition with no firmware change.
 //
 // CHAIN_ENABLE_PIN must be left unassigned in the Web Config Pin Mapping. If it
@@ -24,16 +26,22 @@
 namespace {
 constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
 constexpr int CHAIN_CLEANUP_MACRO_INDEX = 3;    // Web Config "Macro 4"
+constexpr int GAME_RESET_MACRO_INDEX = 4;       // Web Config "Macro 5"
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
+constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
 constexpr int CHAIN_ENABLE_PIN = 21;            // GP21, active-low (GP21 <-> GND)
 
 static_assert(CHAIN_REPEAT_COUNT > 0,
         "CHAIN_REPEAT_COUNT must be at least 1");
+static_assert(GAME_RESET_EVERY_GROUPS > 0,
+        "GAME_RESET_EVERY_GROUPS must be at least 1");
 static_assert(CHAIN_MAIN_MACRO_INDEX >= 0 && CHAIN_MAIN_MACRO_INDEX < MAX_MACRO_LIMIT,
         "CHAIN_MAIN_MACRO_INDEX out of range");
 static_assert(CHAIN_CLEANUP_MACRO_INDEX >= 0 && CHAIN_CLEANUP_MACRO_INDEX < MAX_MACRO_LIMIT,
         "CHAIN_CLEANUP_MACRO_INDEX out of range");
+static_assert(GAME_RESET_MACRO_INDEX >= 0 && GAME_RESET_MACRO_INDEX < MAX_MACRO_LIMIT,
+        "GAME_RESET_MACRO_INDEX out of range");
 }
 
 bool InputMacro::available() {
@@ -163,6 +171,7 @@ void InputMacro::stopChain() {
     chainModeActive = false;
     chainMacroIndex = -1;
     chainMainCompletedCount = 0;
+    chainGroupCompletedCount = 0;
     reset();
 }
 
@@ -180,13 +189,27 @@ void InputMacro::handleChainMacroFinished() {
         return;
     }
 
+    // The cleanup macro closes a group; every GAME_RESET_EVERY_GROUPS of them the
+    // game gets put back to a known state before the next group starts.
     if (macroPosition == CHAIN_CLEANUP_MACRO_INDEX) {
         chainMainCompletedCount = 0;
+        ++chainGroupCompletedCount;
+        if (chainGroupCompletedCount >= GAME_RESET_EVERY_GROUPS) {
+            startChainMacro(GAME_RESET_MACRO_INDEX);
+        } else {
+            startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        }
+        return;
+    }
+
+    if (macroPosition == GAME_RESET_MACRO_INDEX) {
+        chainMainCompletedCount = 0;
+        chainGroupCompletedCount = 0;
         startChainMacro(CHAIN_MAIN_MACRO_INDEX);
         return;
     }
 
-    stopChain(); // should not happen: the chain only ever runs the two macros above
+    stopChain(); // should not happen: the chain only ever runs the macros above
 }
 
 void InputMacro::reset() {
@@ -397,10 +420,11 @@ void InputMacro::preprocess()
 
     if (!chainModeActive) {
         // Pin just went low: take control away from any manually running macro
-        // and always (re)start the chain at the first main macro, count zeroed.
+        // and always (re)start the chain at the first main macro, counts zeroed.
         reset();
         chainModeActive = true;
         chainMainCompletedCount = 0;
+        chainGroupCompletedCount = 0;
         startChainMacro(CHAIN_MAIN_MACRO_INDEX);
     } else if (!isMacroRunning) {
         // Current step was aborted from underneath us (an interruptible macro

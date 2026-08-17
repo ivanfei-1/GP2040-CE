@@ -57,6 +57,7 @@ private:
     bool chainModeActive;
     int chainMacroIndex;
     uint32_t chainMainCompletedCount;
+    uint32_t chainGroupCompletedCount;
     bool isMacroRunning;
     bool isMacroTriggerHeld;
     int macroPosition;

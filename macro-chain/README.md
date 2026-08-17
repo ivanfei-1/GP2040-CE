@@ -3,28 +3,33 @@
 A small patch on top of GP2040-CE **v0.7.12** that runs
 
 ```
-Macro 2 × N  →  Macro 4 × 1  →  repeat forever
+[ Macro 2 × N  →  Macro 4 × 1 ] × M groups  →  Macro 5 × 1  →  repeat forever
 ```
 
 for as long as one dedicated GPIO is **shorted to GND**. Open the jumper and the chain
-stops immediately — mid-macro, not at the end of it — clears its counter, and the next
+stops immediately — mid-macro, not at the end of it — clears both counters, and the next
 short starts again from Macro 2 #1.
 
-Intended for long unattended grinding sessions where a "collect" macro has to be
-followed periodically by a "clean up" macro.
+Intended for long unattended grinding sessions: a "collect" macro that has to be followed
+periodically by a "clean up" macro, and — because games drift out of a known state over
+hours — a "reset" macro every so often that closes and reopens the game.
 
-## The only two knobs
+A group is counted when the **cleanup** macro finishes, so with the defaults below the
+reset macro runs once per 10 × 20 = 200 main-macro runs.
 
-Both live at the top of [`src/addons/input_macro.cpp`](../src/addons/input_macro.cpp):
+## The three knobs
+
+All at the top of [`src/addons/input_macro.cpp`](../src/addons/input_macro.cpp):
 
 ```cpp
-constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
-constexpr int CHAIN_ENABLE_PIN = 21;            // GP21, active-low (GP21 <-> GND)
+constexpr uint32_t CHAIN_REPEAT_COUNT = 10;      // main macro runs per cleanup macro
+constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
+constexpr int CHAIN_ENABLE_PIN = 21;             // GP21, active-low (GP21 <-> GND)
 ```
 
 Change, rebuild, reflash. Nothing else in the firmware needs touching. Which macros run
-is fixed at `macroList[1]` ("Macro 2") and `macroList[3]` ("Macro 4") via
-`CHAIN_MAIN_MACRO_INDEX` / `CHAIN_CLEANUP_MACRO_INDEX` in the same block.
+is fixed at `macroList[1]` ("Macro 2"), `macroList[3]` ("Macro 4") and `macroList[4]`
+("Macro 5") via the `*_MACRO_INDEX` constants in the same block.
 
 ## Wiring
 
@@ -46,15 +51,19 @@ merely fails to start the chain.
 1. **The enable pin must be unassigned** in the active profile's Pin Mapping. If
    anything claims it, the chain disables itself on purpose — otherwise shorting the
    pin to GND would also inject a real button press.
-2. **Both macros must be enabled** and have at least one input each, or the chain
-   fail-safes and stops.
+2. **All three macros must be enabled** and have at least one input each, or the chain
+   fail-safes and stops rather than indexing into an empty macro.
 3. Macros default to *interruptible*: touching the controller aborts the running macro.
    The chain then restarts that same step and keeps its count. Turn interruptible off
    (and exclusive on) for uninterrupted running.
 
-Macro contents are read from storage on every repetition, so editing Macro 2 or Macro 4
-in the Web Config takes effect on the next loop — no rebuild, and reflashing the
-firmware does not disturb the stored macros.
+Macro contents are read from storage on every repetition, so editing Macro 2, 4 or 5 in
+the Web Config takes effect on the next loop — no rebuild, and reflashing the firmware
+does not disturb the stored macros.
+
+The reset macro is whatever you make it. A typical one uses the system-level HOME menu to
+close and relaunch the game, waits out the loading screen, and drives the game back to the
+same starting screen the main macro expects.
 
 ## Design notes
 
@@ -75,6 +84,9 @@ No protobuf, Web Config or storage-format changes, and no new macro config field
 - End-of-macro is intercepted *before* the stock `reset()`/`restart()` branch, and
   returns immediately after switching macros so the now-stale `macro` / `macroInput`
   references are never reused.
+- Both counters live only in RAM and are cleared by `stopChain()`, which every exit path
+  (pin released, Focus Mode lock, `reinit()`, a disabled/empty macro) goes through — so
+  the chain can never resume a half-finished cycle.
 - Focus Mode's macro lock stops the chain too, matching the addon's existing semantics.
 
 ## Building
