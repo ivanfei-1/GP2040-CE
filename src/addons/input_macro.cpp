@@ -26,7 +26,7 @@
 namespace {
 constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
 constexpr int CHAIN_CLEANUP_MACRO_INDEX = 3;    // Web Config "Macro 4"
-constexpr int GAME_RESET_MACRO_INDEX = 4;       // Web Config "Macro 5"
+constexpr int GAME_RESET_MACRO_INDEX = 5;       // Web Config "Macro 6"
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro

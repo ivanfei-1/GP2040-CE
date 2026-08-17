@@ -3,7 +3,7 @@
 A small patch on top of GP2040-CE **v0.7.12** that runs
 
 ```
-[ Macro 2 × N  →  Macro 4 × 1 ] × M groups  →  Macro 5 × 1  →  repeat forever
+[ Macro 2 × N  →  Macro 4 × 1 ] × M groups  →  Macro 6 × 1  →  repeat forever
 ```
 
 for as long as one dedicated GPIO is **shorted to GND**. Open the jumper and the chain
@@ -28,8 +28,8 @@ constexpr int CHAIN_ENABLE_PIN = 21;             // GP21, active-low (GP21 <-> G
 ```
 
 Change, rebuild, reflash. Nothing else in the firmware needs touching. Which macros run
-is fixed at `macroList[1]` ("Macro 2"), `macroList[3]` ("Macro 4") and `macroList[4]`
-("Macro 5") via the `*_MACRO_INDEX` constants in the same block.
+is fixed at `macroList[1]` ("Macro 2"), `macroList[3]` ("Macro 4") and `macroList[5]`
+("Macro 6") via the `*_MACRO_INDEX` constants in the same block.
 
 ## Wiring
 
@@ -57,7 +57,7 @@ merely fails to start the chain.
    The chain then restarts that same step and keeps its count. Turn interruptible off
    (and exclusive on) for uninterrupted running.
 
-Macro contents are read from storage on every repetition, so editing Macro 2, 4 or 5 in
+Macro contents are read from storage on every repetition, so editing Macro 2, 4 or 6 in
 the Web Config takes effect on the next loop — no rebuild, and reflashing the firmware
 does not disturb the stored macros.
 
