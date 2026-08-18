@@ -42,6 +42,14 @@ constexpr int CHAIN_MAIN_RESUME_INPUT_AFTER_RESET = 4;
 
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
+// A macro's D-pad inputs normally go through dpadMode, which on an analog dpadMode
+// turns them into stick pushes - and a stick is what moves things like a map cursor,
+// so a mistimed direction can silently change game state. Macros listed here emit real
+// digital directions instead, which dpadMode never rewrites. Menu-navigation macros
+// belong here; only macros that actually move the character need the stick.
+// Bit i = Web Config "Macro i+1". Default: everything except the main macro.
+constexpr uint32_t DIGITAL_DPAD_MACRO_MASK = 0x3Fu & ~(1u << CHAIN_MAIN_MACRO_INDEX);
+
 constexpr int CHAIN_ENABLE_PIN = 16;            // GP16, unassigned in the stock map
 
 // false: open = run, shorted to GND = stop. This lets the chain share a pin that is
@@ -406,17 +414,22 @@ void InputMacro::runCurrentMacro() {
     // Check if we should still hold this macro input based on duration
     if ((currentMicros - macroStartTime) <= macroInput.duration) {
         uint32_t buttonMask = macroInput.buttonMask;
+        // The low nibble of state.dpad is what dpadMode acts on, so on an analog
+        // dpadMode those directions leave as a stick push. The high nibble is the
+        // digital-only direction that no dpadMode rewrites.
+        const uint8_t dpadShift =
+                ((DIGITAL_DPAD_MACRO_MASK >> macroPosition) & 1u) ? 4 : 0;
         if (buttonMask & GAMEPAD_MASK_DU) {
-            gamepad->state.dpad |= GAMEPAD_MASK_UP;
+            gamepad->state.dpad |= (GAMEPAD_MASK_UP << dpadShift);
         }
         if (buttonMask & GAMEPAD_MASK_DD) {
-            gamepad->state.dpad |= GAMEPAD_MASK_DOWN;
+            gamepad->state.dpad |= (GAMEPAD_MASK_DOWN << dpadShift);
         }
         if (buttonMask & GAMEPAD_MASK_DL) {
-            gamepad->state.dpad |= GAMEPAD_MASK_LEFT;
+            gamepad->state.dpad |= (GAMEPAD_MASK_LEFT << dpadShift);
         }
         if (buttonMask & GAMEPAD_MASK_DR) {
-            gamepad->state.dpad |= GAMEPAD_MASK_RIGHT;
+            gamepad->state.dpad |= (GAMEPAD_MASK_RIGHT << dpadShift);
         }
         gamepad->state.buttons |= buttonMask;
 

@@ -129,3 +129,16 @@ PICO_SDK_PATH=~/pico-sdk GP2040_BOARDCONFIG=Pico SKIP_WEBBUILD=TRUE \
   cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja
 GP2040_BOARDCONFIG=Pico cmake --build build --parallel "$(nproc)"
 ```
+
+## D-pad directions vs. dpadMode
+
+A macro's D-pad inputs are written into the *mode-dependent* half of `state.dpad`, so
+with `dpadMode` set to left or right analog they leave the controller as **stick
+pushes**, not as a D-pad. That is easy to miss and it matters: a stick is what moves
+free-roaming cursors, so a direction that lands one screen too early can silently change
+game state in a way that persists.
+
+`DIGITAL_DPAD_MACRO_MASK` selects, per macro, which half to write. Macros in the mask
+emit the digital-only direction bits that `dpadMode` never rewrites — the right choice
+for menu navigation. Leave a macro out of the mask when it genuinely needs the stick,
+e.g. to move a character. The default is every macro except the main one.
