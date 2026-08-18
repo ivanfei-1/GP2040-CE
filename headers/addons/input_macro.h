@@ -50,7 +50,7 @@ private:
     // Level-sensed macro chain (see CHAIN_* constants in input_macro.cpp)
     void setupChainPin();
     bool isChainEnabledByPin() const;
-    void startChainMacro(int macroIndex);
+    void startChainMacro(int macroIndex, int startInput = 0);
     void stopChain();
     void handleChainMacroFinished();
     bool chainPinAvailable;

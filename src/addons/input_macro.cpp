@@ -35,6 +35,11 @@ constexpr int CHAIN_MAIN_MACRO_INDEX = 1;       // Web Config "Macro 2"
 constexpr int CHAIN_CLEANUP_MACRO_INDEX = 2;    // Web Config "Macro 3"
 constexpr int GAME_RESET_MACRO_INDEX = 3;       // Web Config "Macro 4"
 
+// The reset macro can leave the game part-way into the main macro's opening steps,
+// so the first main run after it starts at this input index instead of the top.
+// 0 = always start from the first input.
+constexpr int CHAIN_MAIN_RESUME_INPUT_AFTER_RESET = 4;
+
 constexpr uint32_t CHAIN_REPEAT_COUNT = 10;     // main macro runs per cleanup macro
 constexpr uint32_t GAME_RESET_EVERY_GROUPS = 20; // groups per game reset macro
 constexpr int CHAIN_ENABLE_PIN = 16;            // GP16, unassigned in the stock map
@@ -160,7 +165,7 @@ bool InputMacro::isChainEnabledByPin() const {
     return CHAIN_RUNS_WHEN_SHORTED ? shorted : !shorted;
 }
 
-void InputMacro::startChainMacro(int macroIndex) {
+void InputMacro::startChainMacro(int macroIndex, int startInput) {
     if (macroIndex < 0 || macroIndex >= MAX_MACRO_LIMIT) {
         stopChain();
         return;
@@ -172,10 +177,15 @@ void InputMacro::startChainMacro(int macroIndex) {
         return;
     }
 
+    // A resume point past the end of the macro is treated as "start from the top",
+    // so shortening a macro in the Web Config can never leave the chain stuck.
+    if (startInput < 0 || startInput >= (int)macro.macroInputs_count)
+        startInput = 0;
+
     chainMacroIndex = macroIndex;
     macroPosition = macroIndex;
     pressedMacro = -1;
-    macroInputPosition = 0;
+    macroInputPosition = startInput;
     isMacroRunning = true;
     // The chain owns this macro's lifetime, there is no physical trigger held.
     isMacroTriggerHeld = true;
@@ -231,7 +241,9 @@ void InputMacro::handleChainMacroFinished() {
     if (macroPosition == GAME_RESET_MACRO_INDEX) {
         chainMainCompletedCount = 0;
         chainGroupCompletedCount = 0;
-        startChainMacro(CHAIN_MAIN_MACRO_INDEX);
+        // The reset macro already performed the main macro's opening steps, so this
+        // one run picks up after them. Later runs start from the top as usual.
+        startChainMacro(CHAIN_MAIN_MACRO_INDEX, CHAIN_MAIN_RESUME_INPUT_AFTER_RESET);
         return;
     }
 

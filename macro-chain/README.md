@@ -43,6 +43,11 @@ constexpr int CHAIN_CLEANUP_MACRO_INDEX = 2;
 constexpr int GAME_RESET_MACRO_INDEX = 3;
 ```
 
+When the reset macro has already performed the main macro's opening steps, set
+`CHAIN_MAIN_RESUME_INPUT_AFTER_RESET` to the input index the main macro should pick up
+from for that one run (0 = always start from the top). Later runs are unaffected, and a
+resume point past the end of the macro falls back to the top.
+
 The init macro is for one-off setup at power-up — connecting the controller, dismissing a
 title screen — so it runs once when the chain starts and is **not** repeated after the
 reset macro. Point `CHAIN_INIT_MACRO_INDEX` at the reset macro's own slot, or add the same
